@@ -41,24 +41,4 @@ steps:
 
   # 2️⃣ Docker ビルド & push
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/cloudrun-sample-api', '.']
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/cloudrun-sample-api']
-
-  # 3️⃣ Cloud Run デプロイ
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: 'deploy-cloud-run'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        DEPLOY_ARGS=""
-        for key in $(jq -r 'keys[]' env.json); do
-          DEPLOY_ARGS="$DEPLOY_ARGS --update-secrets ${key}=${key}:latest"
-        done
-
-        gcloud run deploy cloudrun-sample-api \
-          --image gcr.io/$PROJECT_ID/cloudrun-sample-api \
-          --region asia-northeast1 \
-          --allow-unauthenticated \
-          $DEPLOY_ARGS
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/cloudrun-sample-api', '.']_]()
