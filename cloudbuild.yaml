@@ -1,11 +1,7 @@
-# Cloud Build の設定
-
-# ロギングを Cloud Logging のみに設定
 options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  # 1️⃣ .env を JSON に変換して Secret Manager 更新
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'update-secrets'
     entrypoint: 'bash'
@@ -13,32 +9,61 @@ steps:
       - '-c'
       - |
         echo "🔍 Secret Manager 更新開始..."
+
         if [ ! -f .env ]; then
-          echo ".env ファイルが見つかりません"
-          exit 1
+          echo ".env ファイルが見つかりません。既存のSecretを使用します。"
+          exit 0
         fi
 
-        # JSON に変換
-        jq -Rn '
-          (input | split("\n"))
-          | map(select(length > 0))
-          | map(split("="))
-          | map({(.[0]): .[1]})
-          | add
-        ' < .env > env.json
-
-        # Secret Manager 更新ループ
-        for key in $(jq -r 'keys[]' env.json); do
-          value=$(jq -r --arg k "$key" '.[$k]' env.json)
-          if ! gcloud secrets describe "$key" >/dev/null 2>&1; then
-            gcloud secrets create "$key" --replication-policy="automatic"
+        echo '{' > env.json
+        first=true
+        while IFS= read -r line || [ -n "$line" ]; do
+          [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+          if [[ "$line" == *"="* ]]; then
+            key=$(echo "$line" | cut -d'=' -f1 | xargs)
+            value=$(echo "$line" | cut -d'=' -f2- | xargs)
+            value=$(echo "$value" | sed -e 's/^["'\'']//' -e 's/["'\'']$//')
+            value=$(echo "$value" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
+            if [ "$first" = true ]; then
+              first=false
+            else
+              echo ',' >> env.json
+            fi
+            printf '  "%s": "%s"' "$key" "$value" >> env.json
           fi
-          current_value=$(gcloud secrets versions access latest --secret="$key" || echo "")
-          if [ "$current_value" != "$value" ]; then
-            echo -n "$value" | gcloud secrets versions add "$key" --data-file=-
-          fi
-        done
+        done < .env
+        echo '' >> env.json
+        echo '}' >> env.json
 
-  # 2️⃣ Docker ビルド & push
+        if ! gcloud secrets describe "cloudrun-sample-api-env" >/dev/null 2>&1; then
+          gcloud secrets create "cloudrun-sample-api-env" --replication-policy="automatic"
+        fi
+
+        current_value=$(gcloud secrets versions access latest --secret="cloudrun-sample-api-env" || echo "")
+        new_value=$(cat env.json)
+        if [ "$current_value" != "$new_value" ]; then
+          echo -n "$new_value" | gcloud secrets versions add "cloudrun-sample-api-env" --data-file=-
+        fi
+
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/$PROJECT_ID/cloudrun-sample-api', '.']_]()
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/cloudrun-sample-api'
+      - '.'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/cloudrun-sample-api'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-cloud-run'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud run deploy cloudrun-sample-api \
+          --image "gcr.io/$PROJECT_ID/cloudrun-sample-api" \
+          --region asia-northeast1 \
+          --allow-unauthenticated \
+          --update-secrets "ENV_JSON=cloudrun-sample-api-env:latest"
