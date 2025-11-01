@@ -1,3 +1,9 @@
+# Cloud Build の設定
+
+# ロギングを Cloud Logging のみに設定
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   # 1️⃣ .env を JSON に変換して Secret Manager 更新
   - name: 'gcr.io/cloud-builders/gcloud'
