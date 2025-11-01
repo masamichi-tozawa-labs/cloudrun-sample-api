@@ -1,0 +1,58 @@
+steps:
+  # 1️⃣ .env を JSON に変換して Secret Manager 更新
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'update-secrets'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "🔍 Secret Manager 更新開始..."
+        if [ ! -f .env ]; then
+          echo ".env ファイルが見つかりません"
+          exit 1
+        fi
+
+        # JSON に変換
+        jq -Rn '
+          (input | split("\n"))
+          | map(select(length > 0))
+          | map(split("="))
+          | map({(.[0]): .[1]})
+          | add
+        ' < .env > env.json
+
+        # Secret Manager 更新ループ
+        for key in $(jq -r 'keys[]' env.json); do
+          value=$(jq -r --arg k "$key" '.[$k]' env.json)
+          if ! gcloud secrets describe "$key" >/dev/null 2>&1; then
+            gcloud secrets create "$key" --replication-policy="automatic"
+          fi
+          current_value=$(gcloud secrets versions access latest --secret="$key" || echo "")
+          if [ "$current_value" != "$value" ]; then
+            echo -n "$value" | gcloud secrets versions add "$key" --data-file=-
+          fi
+        done
+
+  # 2️⃣ Docker ビルド & push
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/cloudrun-sample-api', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/cloudrun-sample-api']
+
+  # 3️⃣ Cloud Run デプロイ
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-cloud-run'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        DEPLOY_ARGS=""
+        for key in $(jq -r 'keys[]' env.json); do
+          DEPLOY_ARGS="$DEPLOY_ARGS --update-secrets ${key}=${key}:latest"
+        done
+
+        gcloud run deploy cloudrun-sample-api \
+          --image gcr.io/$PROJECT_ID/cloudrun-sample-api \
+          --region asia-northeast1 \
+          --allow-unauthenticated \
+          $DEPLOY_ARGS
