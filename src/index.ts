@@ -18,6 +18,11 @@ app.get('/', (req, res) => {
   res.send(`Hello World! ${process.env.ENV_JSON}`)
 })
 
+app.get('/greet', (req, res) => {
+  const name = req.query.name || 'Guest'
+  res.json({ message: `Hello ${name}!` })
+})
+
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`)
 })
